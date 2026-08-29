@@ -121,11 +121,17 @@ catalog adds later. The `/bai-models` command shows **Context**, **Max Out**, an
 
 ### `/bai-models`
 
-Lists the B.AI models currently available to pi (chat via Responses API + image
-generation), with type and reasoning columns.
+Lists the B.AI models currently available to pi. By default it shows only the
+**FREE** models (plus image models) and hides charged / quota models:
 
 ```
 /bai-models
+```
+
+Pass `all` to list every model, including charged and quota-limited ones:
+
+```
+/bai-models all
 ```
 
 ### `/bai-docs`

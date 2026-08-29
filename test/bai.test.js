@@ -110,7 +110,7 @@ test("/bai-models command badges FREE-tagged models", () => {
     id: m.id, name: m.id, provider: "bai", reasoning: m.reasoning,
     input: m.input, contextWindow: m.contextWindow, maxTokens: m.maxTokens,
   }));
-  handler("", { mode: "tui", modelRegistry: { getAvailable: () => withProvider } });
+  handler("all", { mode: "tui", modelRegistry: { getAvailable: () => withProvider } });
   assert.ok(appended && appended.name === "bai-models");
   const md = appended.data.markdown;
   assert.ok(md.includes("FREE"), "markdown should badge free models");
@@ -125,6 +125,34 @@ test("/bai-models command badges FREE-tagged models", () => {
   assert.ok(md.includes("1M"), "gemini models should show their 1M context");
   // Modalities column should reflect vision-capable models.
   assert.ok(md.includes("Modalities"), "markdown should have a Modalities column");
+});
+
+test("/bai-models defaults to FREE-only and `all` shows everything", () => {
+  let config, commands = [], appended = null;
+  extension({
+    registerProvider(_n, c) { config = c; },
+    registerEntryRenderer() {},
+    appendEntry(name, data) { appended = { name, data }; },
+    registerCommand(name, def) { commands.push({ name, def }); },
+  });
+  const handler = commands.find((c) => c.name === "bai-models").def.handler;
+  const withProvider = config.models.map((m) => ({
+    id: m.id, name: m.id, provider: "bai", reasoning: m.reasoning,
+    input: m.input, contextWindow: m.contextWindow, maxTokens: m.maxTokens,
+  }));
+  // Default (no args) -> FREE models only, with a hint about `all`.
+  handler("", { mode: "tui", modelRegistry: { getAvailable: () => withProvider } });
+  const free = appended.data.markdown;
+  assert.ok(free.includes("FREE"), "default shows FREE models");
+  assert.ok(free.includes("/bai-models all"), "default hints at the all parameter");
+  assert.ok(!free.includes("gpt-5.6-sol"), "charged model gpt-5.6-sol omitted by default");
+  assert.ok(!free.includes("claude-opus-5"), "charged model claude-opus-5 omitted by default");
+  // `all` -> everything, including charged models.
+  handler("all", { mode: "tui", modelRegistry: { getAvailable: () => withProvider } });
+  const all = appended.data.markdown;
+  assert.ok(all.includes("gpt-5.6-sol"), "all view includes charged model gpt-5.6-sol");
+  assert.ok(all.includes("claude-opus-5"), "all view includes charged model claude-opus-5");
+  assert.ok(!all.includes("/bai-models all"), "all view does not re-hint itself");
 });
 
 test("streamBai routes by id when pi strips metadata fields", () => {

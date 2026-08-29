@@ -610,17 +610,24 @@ function fmtSize(n?: number): string {
   return String(n);
 }
 
-function buildModelsMarkdown(models: any[]): string {
-  const head = [
-    "# B.AI models",
-    "",
-    `_${models.length} model(s) — catalog from \`GET /v1/models\` (image models always included)_`,
-  ];
+function buildModelsMarkdown(models: any[], freeOnly = false, totalCount?: number): string {
+  const total = totalCount ?? models.length;
+  const head = freeOnly
+    ? [
+        "# B.AI models — FREE",
+        "",
+        `_Showing ${models.length} free model(s) of ${total} total. Charged / quota models are omitted — run \`/bai-models all\` to list everything._`,
+      ]
+    : [
+        "# B.AI models",
+        "",
+        `_${models.length} model(s) — catalog from \`GET /v1/models\` (image models always included)_`,
+      ];
   if (hiddenUuids.length) {
     head.push(`_Hiding ${hiddenUuids.length} internal/UUID model id(s) (not selectable chat models)._`);
   }
   if (models.length === 0) {
-    return [...head, "", "_No B.AI models available — set `BAI_API_KEY` and restart pi._"].join("\n");
+    return [...head, "", freeOnly ? "_No free models available._" : "_No B.AI models available — set `BAI_API_KEY` and restart pi._"].join("\n");
   }
   // Free-tier models first, then alphabetical — makes the usable set obvious.
   // Access tier is learned from live responses (see modelStatus) and falls back
@@ -651,6 +658,11 @@ function buildModelsMarkdown(models: any[]): string {
       return `| \`${m.id}\` | ${modelType(m)} | ${tierLabel(m)} | ${m.reasoning ? "✓" : "—"} | ${ctx} | ${max} | ${mods} |`;
     })
     .join("\n");
+  const notes = [
+    "_Context windows / max output come from each model's public specs (B.AI's `/v1/models` does not expose them) and are looked up by model id, so they stay correct even though pi normalizes these fields when storing models. The table falls back to the family default for any unlisted model. Modalities lists input capabilities for chat models and `image` for image models._",
+    "_**FREE** = usable on the free tier (200). **CHARGE** = 403, deposit required. **QUOTA** = 400, insufficient quota. Access is learned from your live chat responses and refreshed on demand with `/bai-free`; unknown models fall back to the seeded free list._",
+  ];
+  if (freeOnly) notes.push("_Run `/bai-models all` to show charged / quota models too._");
   return [
     ...head,
     "",
@@ -658,8 +670,7 @@ function buildModelsMarkdown(models: any[]): string {
     "|---|---|:---:|:---:|:---:|:---:|:---:|",
     rows,
     "",
-    "_Context windows / max output come from each model's public specs (B.AI's `/v1/models` does not expose them) and are looked up by model id, so they stay correct even though pi normalizes these fields when storing models. The table falls back to the family default for any unlisted model. Modalities lists input capabilities for chat models and `image` for image models._",
-    "_**FREE** = usable on the free tier (200). **CHARGE** = 403, deposit required. **QUOTA** = 400, insufficient quota. Access is learned from your live chat responses and refreshed on demand with `/bai-free`; unknown models fall back to the seeded free list._",
+    ...notes,
   ].join("\n");
 }
 
@@ -713,9 +724,16 @@ async function probeAccess(id: string, apiKey: string, signal?: AbortSignal): Pr
 
 function registerBaiCommands(pi: any) {
   pi.registerCommand("bai-models", {
-    description: "List B.AI models available to pi (chat via Responses API + image generation).",
-    handler: async (_args: string, ctx: any) => {
-      const markdown = buildModelsMarkdown(baiModels(ctx));
+    description: "List B.AI's free models (default). Add `all` to also show charged / quota models.",
+    handler: async (args: string, ctx: any) => {
+      const showAll = /^all\b/i.test((args || "").trim());
+      const all = baiModels(ctx);
+      // Default: FREE models only (plus image models, which aren't chat-charged).
+      // Charged / quota models are omitted unless `all` is passed.
+      const models = showAll
+        ? all
+        : all.filter((m: any) => modelType(m) === "image" || accessTier(m.id) === "free");
+      const markdown = buildModelsMarkdown(models, !showAll, all.length);
       if (ctx?.mode === "tui") pi.appendEntry("bai-models", { markdown });
       else notifyOrPrint(ctx, markdown, "info");
     },
