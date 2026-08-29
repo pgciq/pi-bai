@@ -273,6 +273,10 @@ test("/bai-free probes models and records access tiers", async () => {
   });
   const handler = commands.find((c) => c.name === "bai-free").def.handler;
   const originalFetch = globalThis.fetch;
+  // The handler bails unless BAI_API_KEY is set; provide a dummy so the test is
+  // deterministic regardless of the environment (CI has no real key).
+  const originalKey = process.env.BAI_API_KEY;
+  process.env.BAI_API_KEY = "test-key";
   globalThis.fetch = async (_url, options) => {
     // The model id is in the request body, not the URL.
     const id = JSON.parse(options.body).model;
@@ -298,5 +302,6 @@ test("/bai-free probes models and records access tiers", async () => {
     assert.equal(modelStatus.get("gpt-5.6-sol"), "premium");
   } finally {
     globalThis.fetch = originalFetch;
+    process.env.BAI_API_KEY = originalKey;
   }
 });
