@@ -119,6 +119,12 @@ test("/bai-models command badges FREE-tagged models", () => {
   }
   assert.ok(md.includes("gpt-5.6-sol"), "markdown should list premium models too");
   assert.ok(md.includes("gpt-image-2"), "markdown should list image models too");
+  // Context windows must be differentiated per model (not a single default).
+  assert.ok(md.includes("400K"), "gpt-5.6-sol should show its 400K context");
+  assert.ok(md.includes("200K"), "claude models should show their 200K context");
+  assert.ok(md.includes("1M"), "gemini models should show their 1M context");
+  // Modalities column should reflect vision-capable models.
+  assert.ok(md.includes("Modalities"), "markdown should have a Modalities column");
 });
 
 test("streamBai routes by id when pi strips metadata fields", () => {

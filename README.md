@@ -95,8 +95,27 @@ B.AI exposes three protocol-compatible endpoints under the production base URL
 The seed list covers B.AI's language-model families and image models. After the first
 refresh, the live `GET /v1/models` catalog replaces the chat seed (image models are
 always merged back in), so you always see exactly the models enabled for your API key.
-Context windows / max output are conservative defaults, since B.AI does not expose them
-via `/v1/models`.
+
+**Capabilities.** B.AI's `GET /v1/models` returns only `{ id, object, created }` — it does
+**not** expose context windows, max output, or modalities. The extension therefore ships a
+per-model capability table (`MODEL_CAPS` in `extensions/bai.ts`) sourced from each model's
+public specifications, with a family-based fallback (`familyCaps`) for any model the live
+catalog adds later. The `/bai-models` command shows **Context**, **Max Out**, and
+**Modalities** columns so you can see each model's real limits at a glance:
+
+| Family | Context | Max out | Input |
+|---|---|---|---|
+| `gpt-5.*` | 400K | 16K–128K | text + image |
+| `claude-*` | 200K | 64K | text + image |
+| `gemini-*` | 1M | 64K | text + image |
+| `deepseek-v4*` | 128K | 32K | text (+ image for vision-exp/pro) |
+| `glm-5.*` | 128K | 32K | text + image |
+| `kimi-*`, `qwen3.8*`, `minimax-*`, `hy3`, `mimo-*` | 256K | 32K | text |
+
+> These are best-effort figures from public model specs. If B.AI's actual limits differ,
+> edit `MODEL_CAPS` (or report it) — they are not fetched from the API.
+
+## Commands
 
 ## Commands
 

@@ -213,18 +213,103 @@ const DEFAULT_CONTEXT = 200000;
 const DEFAULT_MAX_TOKENS = 64000;
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
+// ---------------------------------------------------------------------------
+// Model capabilities (context window / max output / input modalities)
+// ---------------------------------------------------------------------------
+// B.AI's `GET /v1/models` returns only { id, object, created } — it does NOT expose
+// context windows, max output, or modalities. The table below is sourced from each
+// model's public specifications (best-effort; B.AI-specific version suffixes such as
+// gpt-5.6-sol share their family's limits). familyCaps() infers a sensible default
+// for any model not explicitly listed (e.g. one added to the live catalog later).
+interface Caps { contextWindow: number; maxTokens: number; input: string[]; }
+const MODEL_CAPS: Record<string, Caps> = {
+  // OpenAI GPT-5.x
+  "gpt-5.6-sol": { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] },
+  "gpt-5.6-terra": { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] },
+  "gpt-5.6-luna": { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] },
+  "gpt-5.5": { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] },
+  "gpt-5.5-instant": { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] },
+  "gpt-5.4": { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] },
+  "gpt-5.2": { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] },
+  "gpt-5.4-pro": { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] },
+  "gpt-5.4-mini": { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] },
+  "gpt-5-mini": { contextWindow: 400000, maxTokens: 64000, input: ["text", "image"] },
+  "gpt-5.4-nano": { contextWindow: 400000, maxTokens: 16000, input: ["text", "image"] },
+  "gpt-5-nano": { contextWindow: 400000, maxTokens: 16000, input: ["text", "image"] },
+  // Anthropic Claude 5.x
+  "claude-opus-5": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  "claude-fable-5": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  "claude-opus-4.8": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  "claude-opus-4.7": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  "claude-opus-4.6": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  "claude-opus-4.5": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  "claude-sonnet-5": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  "claude-sonnet-4.6": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  "claude-sonnet-4.5": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  "claude-haiku-4.5": { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] },
+  // Google Gemini 3.x
+  "gemini-3.1-pro": { contextWindow: 1000000, maxTokens: 64000, input: ["text", "image"] },
+  "gemini-3-flash": { contextWindow: 1000000, maxTokens: 64000, input: ["text", "image"] },
+  "gemini-3.5-flash-lite": { contextWindow: 1000000, maxTokens: 64000, input: ["text", "image"] },
+  "gemini-3.6-flash": { contextWindow: 1000000, maxTokens: 64000, input: ["text", "image"] },
+  "gemini-3.5-flash": { contextWindow: 1000000, maxTokens: 64000, input: ["text", "image"] },
+  // DeepSeek v4
+  "deepseek-v4-flash": { contextWindow: 128000, maxTokens: 32000, input: ["text"] },
+  "deepseek-v4-flash-vision-exp": { contextWindow: 128000, maxTokens: 32000, input: ["text", "image"] },
+  "deepseek-v4-pro": { contextWindow: 128000, maxTokens: 32000, input: ["text", "image"] },
+  // Zhipu GLM-5.x
+  "glm-5.1": { contextWindow: 128000, maxTokens: 32000, input: ["text", "image"] },
+  "glm-5.2": { contextWindow: 128000, maxTokens: 32000, input: ["text", "image"] },
+  "glm-5.3": { contextWindow: 128000, maxTokens: 32000, input: ["text", "image"] },
+  "glm-5.3-flash": { contextWindow: 128000, maxTokens: 32000, input: ["text", "image"] },
+  // Moonshot Kimi
+  "kimi-k2.6": { contextWindow: 256000, maxTokens: 32000, input: ["text"] },
+  "kimi-k3": { contextWindow: 256000, maxTokens: 32000, input: ["text"] },
+  // Alibaba Qwen3.8
+  "qwen3.8-flash": { contextWindow: 256000, maxTokens: 32000, input: ["text", "image"] },
+  "qwen3.8-max": { contextWindow: 256000, maxTokens: 32000, input: ["text", "image"] },
+  "qwen3.8-27b": { contextWindow: 256000, maxTokens: 32000, input: ["text", "image"] },
+  // MiniMax
+  "minimax-m3": { contextWindow: 256000, maxTokens: 32000, input: ["text"] },
+  "minimax-m2.7": { contextWindow: 256000, maxTokens: 32000, input: ["text"] },
+  // Tencent Hunyuan
+  "hy3": { contextWindow: 256000, maxTokens: 32000, input: ["text"] },
+  // Xiaomi MiMo
+  "mimo-v2.5": { contextWindow: 256000, maxTokens: 32000, input: ["text"] },
+  "mimo-v2.5-pro": { contextWindow: 256000, maxTokens: 32000, input: ["text"] },
+};
+
+function familyCaps(id: string): Caps {
+  if (id.startsWith("gpt-5")) return { contextWindow: 400000, maxTokens: 128000, input: ["text", "image"] };
+  if (id.startsWith("claude-")) return { contextWindow: 200000, maxTokens: 64000, input: ["text", "image"] };
+  if (id.startsWith("gemini-")) return { contextWindow: 1000000, maxTokens: 65536, input: ["text", "image"] };
+  if (id.startsWith("deepseek-v4")) return { contextWindow: 128000, maxTokens: 32000, input: ["text"] };
+  if (id.startsWith("glm-5")) return { contextWindow: 128000, maxTokens: 32000, input: ["text", "image"] };
+  if (id.startsWith("kimi-")) return { contextWindow: 256000, maxTokens: 32000, input: ["text"] };
+  if (id.startsWith("qwen3.8")) return { contextWindow: 256000, maxTokens: 32000, input: ["text", "image"] };
+  if (id.startsWith("minimax-")) return { contextWindow: 256000, maxTokens: 32000, input: ["text"] };
+  if (id === "hy3") return { contextWindow: 256000, maxTokens: 32000, input: ["text"] };
+  if (id.startsWith("mimo-")) return { contextWindow: 256000, maxTokens: 32000, input: ["text"] };
+  return { contextWindow: DEFAULT_CONTEXT, maxTokens: DEFAULT_MAX_TOKENS, input: ["text"] };
+}
+
+function capsFor(id: string): Caps {
+  return MODEL_CAPS[id] ?? familyCaps(id);
+}
+
 function chatModel(id: string) {
   const chatOnly = CHAT_ONLY_IDS.has(id);
   const reasoning = !chatOnly && REASONING_IDS.has(id);
   const free = FREE_IDS.has(id);
+  const caps = capsFor(id);
   return {
     id,
     name: id,
     reasoning,
-    input: ["text"],
+    input: [...caps.input],
     cost: { ...ZERO_COST },
-    contextWindow: DEFAULT_CONTEXT,
-    maxTokens: DEFAULT_MAX_TOKENS,
+    contextWindow: caps.contextWindow,
+    maxTokens: caps.maxTokens,
     // Private metadata (pi ignores unknown fields); consumed by streamBai and /bai-models.
     ...(chatOnly ? { baiChatOnly: true } : {}),
     ...(free ? { baiFree: true } : {}),
@@ -265,7 +350,10 @@ async function fetchModels(baseUrl: string, signal?: AbortSignal) {
     : Array.isArray(payload)
       ? payload
       : [];
-  return data.filter((m: any) => m && m.id).map((m: any) => chatModel(String(m.id)));
+  return data.filter((m: any) => m && m.id).map((m: any) => {
+    const id = String(m.id);
+    return chatModel(id);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -505,8 +593,8 @@ function modelType(m: any): "image" | "chat" {
 
 function fmtSize(n?: number): string {
   if (!n) return "—";
-  if (n >= 1_048_576) return `${Math.round(n / 1_048_576)}M`;
-  if (n >= 1024) return `${Math.round(n / 1024)}K`;
+  if (n >= 1_000_000) return `${Math.round(n / 1_000_000)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}K`;
   return String(n);
 }
 
@@ -534,20 +622,25 @@ function buildModelsMarkdown(models: any[]): string {
     (a, b) => (isFree(b) ? 1 : 0) - (isFree(a) ? 1 : 0) || String(a.id).localeCompare(String(b.id)),
   );
   const rows = sorted
-    .map(
-      (m) =>
-        `| \`${m.id}\` | ${modelType(m)} | ${tierLabel(m)} | ${m.reasoning ? "✓" : "—"} | ${fmtSize(m.contextWindow)} | ${fmtSize(m.maxTokens)} |`,
-    )
+    .map((m) => {
+      const isImage = modelType(m) === "image";
+      const ctx = isImage ? "—" : fmtSize(m.contextWindow);
+      const max = isImage ? "—" : fmtSize(m.maxTokens);
+      const mods = isImage
+        ? "image"
+        : (m.input ?? ["text"]).map((x: string) => (x === "image" ? "image" : "text")).join("+");
+      return `| \`${m.id}\` | ${modelType(m)} | ${tierLabel(m)} | ${m.reasoning ? "✓" : "—"} | ${ctx} | ${max} | ${mods} |`;
+    })
     .join("\n");
   return [
     ...head,
     "",
-    "| Model | Type | Access | Reasoning | Context | Max Out |",
-    "|---|---|:---:|:---:|:---:|:---:|",
+    "| Model | Type | Access | Reasoning | Context | Max Out | Modalities |",
+    "|---|---|:---:|:---:|:---:|:---:|:---:|",
     rows,
     "",
-    "_Context windows / max output are conservative defaults; B.AI does not expose them via `/v1/models`._",
-    "_**FREE** = usable on the free tier (200). **CHARGE** = 403, deposit required. **QUOTA** = 400, insufficient quota. Status is learned from your live chat responses and refreshed on demand with `/bai-free`; unknown models fall back to the seeded free list._",
+    "_Context windows / max output come from each model's public specs (B.AI's `/v1/models` does not expose them); the table falls back to the family default for any unlisted model. Modalities lists input capabilities for chat models and `image` for image models._",
+    "_**FREE** = usable on the free tier (200). **CHARGE** = 403, deposit required. **QUOTA** = 400, insufficient quota. Access is learned from your live chat responses and refreshed on demand with `/bai-free`; unknown models fall back to the seeded free list._",
   ].join("\n");
 }
 
