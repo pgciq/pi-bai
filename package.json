@@ -1,6 +1,6 @@
 {
   "name": "pi-bai",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension for B.AI — a unified LLM gateway (OpenAI Chat Completions / Responses / Anthropic Messages compatible)",
   "keywords": [
     "pi-package",
