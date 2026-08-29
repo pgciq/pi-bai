@@ -56,6 +56,21 @@ const openAIResponsesApi = await (async () => {
   }
 })();
 
+// Chat-completions core — used for models that are NOT supported on the Responses
+// API (e.g. the limited-time-free deepseek-v4-flash / hy3 / mimo-v2.5 families,
+// which B.AI rejects on /v1/responses with model_not_supported_on_endpoint).
+const openAICompletionsApi = await (async () => {
+  try {
+    return (await import("@earendil-works/pi-ai/api/openai-completions.lazy")).openAICompletionsApi;
+  } catch {
+    return () => ({
+      streamSimple: () => {
+        throw new Error("pi-ai openai-completions core is unavailable in this environment.");
+      },
+    });
+  }
+})();
+
 // Reasoning-capable families (per B.AI docs: GPT-5.x, Claude Opus 5, Gemini 3.6,
 // DeepSeek v4, GLM-5.3, Kimi, Grok, MiMo, MiniMax, Hunyuan all support
 // reasoning). Lighter tiers are left non-reasoning to avoid sending the
@@ -65,7 +80,18 @@ const REASONING_IDS = new Set([
   "gpt-5.5", "gpt-5.4", "gpt-5.4-pro",
   "claude-opus-5", "gemini-3.6-flash", "deepseek-v4-pro",
   "glm-5.3-flash", "kimi-k3", "qwen3.8-flash",
-  "mimo-v2.5-pro", "minimax-m3", "hy3",
+  "mimo-v2.5-pro", "minimax-m3",
+]);
+
+// Models that B.AI only exposes on /v1/chat/completions (they 400 on
+// /v1/responses with model_not_supported_on_endpoint). The limited-time-free
+// models fall here. These still reason natively (they emit reasoning tokens on
+// chat/completions), so we route them through the openai-completions core.
+const CHAT_ONLY_IDS = new Set([
+  "deepseek-v4-flash",
+  "deepseek-v4-flash-vision-exp",
+  "hy3",
+  "mimo-v2.5",
 ]);
 
 // Maps pi thinking levels → B.AI reasoning.effort values.
@@ -88,6 +114,8 @@ const CHAT_SEED_IDS = [
   "claude-opus-5", "gemini-3.6-flash", "deepseek-v4-pro",
   "glm-5.3-flash", "kimi-k3", "qwen3.8-flash",
   "mimo-v2.5-pro", "minimax-m3", "hy3",
+  // Limited-time-free models — chat/completions only (rejected on /v1/responses).
+  "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "mimo-v2.5",
 ];
 
 // Image-generation models. IDs are best-effort from the B.AI docs slugs
@@ -104,7 +132,8 @@ const DEFAULT_MAX_TOKENS = 64000;
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 function chatModel(id: string) {
-  const reasoning = REASONING_IDS.has(id);
+  const chatOnly = CHAT_ONLY_IDS.has(id);
+  const reasoning = !chatOnly && REASONING_IDS.has(id);
   return {
     id,
     name: id,
@@ -114,6 +143,7 @@ function chatModel(id: string) {
     contextWindow: DEFAULT_CONTEXT,
     maxTokens: DEFAULT_MAX_TOKENS,
     // Private metadata (pi ignores unknown fields); consumed by streamBai.
+    ...(chatOnly ? { baiChatOnly: true } : {}),
     ...(reasoning ? { thinkingLevelMap: THINKING_LEVEL_MAP } : {}),
   };
 }
@@ -282,6 +312,15 @@ function streamResponsesChat(model: any, context: any, options: any) {
 
 function streamBai(model: any, context: any, options: any) {
   if (model.baiImageModel) return streamImageGeneration(model, context, options);
+  // Chat-only models (e.g. the limited-time-free deepseek-v4-flash / hy3 /
+  // mimo-v2.5 families) are rejected on /v1/responses; route them to the
+  // openai-completions core. All other models use the Responses API, which
+  // carries native reasoning effort / summary controls.
+  const apiKey = process.env[API_KEY_ENV];
+  if (model.baiChatOnly) {
+    const resolved = { ...model, baseUrl: API_BASE, api: "openai-completions" };
+    return openAICompletionsApi().streamSimple(resolved, context, { ...options, apiKey });
+  }
   return streamResponsesChat(model, context, options);
 }
 

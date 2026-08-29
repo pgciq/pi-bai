@@ -44,10 +44,39 @@ test("seeds chat + image models and flags reasoning/image metadata", () => {
   const reasoningModel = config.models.find((m) => m.id === "gpt-5.6-sol");
   assert.ok(reasoningModel.reasoning, "gpt-5.6-sol should be flagged reasoning");
   assert.ok(reasoningModel.thinkingLevelMap && reasoningModel.thinkingLevelMap.off === "none");
+  assert.equal(reasoningModel.baiChatOnly, undefined, "gpt-5.6-sol routes via Responses API");
 
   // Lighter tiers stay non-reasoning to avoid sending `reasoning` to unsupported models.
   const mini = config.models.find((m) => m.id === "gpt-5-mini");
   assert.equal(mini.reasoning, false);
+
+  // Limited-time-free models are chat/completions-only (rejected on /v1/responses).
+  for (const id of ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "hy3", "mimo-v2.5"]) {
+    const m = config.models.find((x) => x.id === id);
+    assert.ok(m, `seed should include ${id}`);
+    assert.equal(m.baiChatOnly, true, `${id} should be flagged chat-only`);
+    assert.equal(m.reasoning, false, `${id} routes through openai-completions`);
+  }
+});
+
+test("streamBai routes chat-only models to openai-completions, others to responses", () => {
+  const { config } = getProviderConfig();
+  const ctx = { messages: [{ role: "user", content: "hi" }] };
+  const opts = {};
+
+  const chatOnly = config.models.find((m) => m.baiChatOnly);
+  assert.ok(chatOnly, "a chat-only model is present");
+  const streamedChat = config.streamSimple(chatOnly, ctx, opts);
+  assert.ok(typeof streamedChat === "object" && streamedChat !== null, "chat-only returns a stream");
+
+  const responsesModel = config.models.find((m) => m.id === "gpt-5.6-sol");
+  const streamedResp = config.streamSimple(responsesModel, ctx, opts);
+  assert.ok(typeof streamedResp === "object" && streamedResp !== null, "responses model returns a stream");
+
+  const image = config.models.find((m) => m.baiImageModel);
+  assert.ok(image, "an image model is present");
+  const streamedImg = config.streamSimple(image, ctx, opts);
+  assert.ok(typeof streamedImg === "object" && streamedImg !== null, "image model returns a stream");
 });
 
 test("registers /bai-models and /bai-docs commands", () => {
