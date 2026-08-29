@@ -1,0 +1,44 @@
+{
+  "name": "pi-bai",
+  "version": "0.1.0",
+  "description": "Pi extension for B.AI — a unified LLM gateway (OpenAI Chat Completions / Responses / Anthropic Messages compatible)",
+  "keywords": [
+    "pi-package",
+    "b.ai",
+    "bai",
+    "llm",
+    "openai-compatible",
+    "gpt",
+    "claude",
+    "gemini"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pgciq/pi-bai"
+  },
+  "files": [
+    "extensions",
+    "README.md"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "dependencies": {
+    "@earendil-works/pi-tui": "^0.84.3"
+  }
+}

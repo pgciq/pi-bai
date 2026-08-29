@@ -1,0 +1,7 @@
+node_modules/
+*.log
+.DS_Store
+
+# Scraped doc / temp artifacts (not part of the package)
+*.html
+*.txt
