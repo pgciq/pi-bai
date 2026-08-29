@@ -64,7 +64,7 @@ const REASONING_IDS = new Set([
   "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
   "gpt-5.5", "gpt-5.4", "gpt-5.4-pro",
   "claude-opus-5", "gemini-3.6-flash", "deepseek-v4-pro",
-  "glm-5.3-flash", "kimi-k3", "grok-4.6",
+  "glm-5.3-flash", "kimi-k3", "qwen3.8-flash",
   "mimo-v2.5-pro", "minimax-m3", "hy3",
 ]);
 
@@ -86,12 +86,17 @@ const CHAT_SEED_IDS = [
   "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.2",
   "gpt-5-mini", "gpt-5-nano",
   "claude-opus-5", "gemini-3.6-flash", "deepseek-v4-pro",
-  "glm-5.3-flash", "kimi-k3", "qwen3-8-flash", "grok-4.6",
+  "glm-5.3-flash", "kimi-k3", "qwen3.8-flash",
   "mimo-v2.5-pro", "minimax-m3", "hy3",
 ];
 
-// Image-generation models. IDs follow the doc slugs (gpt-image-2,
-// grok-imagine-image-2.0). The live /v1/models catalog never includes these.
+// Image-generation models. IDs are best-effort from the B.AI docs slugs
+// (gpt-image-2, grok-imagine-image-2.0). VERIFY before relying on them:
+// live tests returned `model_not_found` for these IDs and the image API
+// reference was rate-limited at implementation time, so the exact image model
+// IDs could not be confirmed. The /v1/images/generations PATH is confirmed to
+// exist (the API reaches model resolution); only the IDs are uncertain. The
+// live /v1/models catalog never includes image models, so they are seeded here.
 const IMAGE_SEED_IDS = ["gpt-image-2", "grok-imagine-image-2.0"];
 
 const DEFAULT_CONTEXT = 200000;
