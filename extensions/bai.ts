@@ -335,6 +335,18 @@ function imageModel(id: string) {
 // ---------------------------------------------------------------------------
 // Model catalog
 // ---------------------------------------------------------------------------
+// B.AI's live /v1/models occasionally includes bare-UUID model ids — these are
+// auto-generated ids for fine-tune / internal / routing model versions. They are
+// not real, selectable chat models and only clutter the picker, so we drop them.
+// (If B.AI ever emits a non-standard UUID shape, widen UUID_RE accordingly.)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(id: string): boolean {
+  return UUID_RE.test(id);
+}
+// Internal/UUID model ids observed in the live catalog but dropped from the
+// picker; refreshed by fetchModels each time and surfaced by /bai-models.
+let hiddenUuids: string[] = [];
+
 async function fetchModels(baseUrl: string, signal?: AbortSignal) {
   const apiKey = process.env[API_KEY_ENV];
   const headers: Record<string, string> = {};
@@ -350,10 +362,10 @@ async function fetchModels(baseUrl: string, signal?: AbortSignal) {
     : Array.isArray(payload)
       ? payload
       : [];
-  return data.filter((m: any) => m && m.id).map((m: any) => {
-    const id = String(m.id);
-    return chatModel(id);
-  });
+  // Drop non-model / internal entries (bare-UUID ids) before normalizing.
+  const real = data.filter((m: any) => m && m.id && !isUuid(String(m.id)));
+  hiddenUuids = data.filter((m: any) => m && m.id && isUuid(String(m.id))).map((m: any) => String(m.id));
+  return real.map((m: any) => chatModel(String(m.id)));
 }
 
 // ---------------------------------------------------------------------------
@@ -604,6 +616,9 @@ function buildModelsMarkdown(models: any[]): string {
     "",
     `_${models.length} model(s) — catalog from \`GET /v1/models\` (image models always included)_`,
   ];
+  if (hiddenUuids.length) {
+    head.push(`_Hiding ${hiddenUuids.length} internal/UUID model id(s) (not selectable chat models)._`);
+  }
   if (models.length === 0) {
     return [...head, "", "_No B.AI models available — set `BAI_API_KEY` and restart pi._"].join("\n");
   }
@@ -624,11 +639,15 @@ function buildModelsMarkdown(models: any[]): string {
   const rows = sorted
     .map((m) => {
       const isImage = modelType(m) === "image";
-      const ctx = isImage ? "—" : fmtSize(m.contextWindow);
-      const max = isImage ? "—" : fmtSize(m.maxTokens);
+      // Derive capabilities from the per-model table by id. pi's registry may
+      // normalize/reset contextWindow/maxTokens/input when it stores models, so
+      // reading m.contextWindow etc. is unreliable — look them up by id instead.
+      const caps = capsFor(m.id);
+      const ctx = isImage ? "—" : fmtSize(caps.contextWindow);
+      const max = isImage ? "—" : fmtSize(caps.maxTokens);
       const mods = isImage
         ? "image"
-        : (m.input ?? ["text"]).map((x: string) => (x === "image" ? "image" : "text")).join("+");
+        : caps.input.map((x: string) => (x === "image" ? "image" : "text")).join("+");
       return `| \`${m.id}\` | ${modelType(m)} | ${tierLabel(m)} | ${m.reasoning ? "✓" : "—"} | ${ctx} | ${max} | ${mods} |`;
     })
     .join("\n");
@@ -639,7 +658,7 @@ function buildModelsMarkdown(models: any[]): string {
     "|---|---|:---:|:---:|:---:|:---:|:---:|",
     rows,
     "",
-    "_Context windows / max output come from each model's public specs (B.AI's `/v1/models` does not expose them); the table falls back to the family default for any unlisted model. Modalities lists input capabilities for chat models and `image` for image models._",
+    "_Context windows / max output come from each model's public specs (B.AI's `/v1/models` does not expose them) and are looked up by model id, so they stay correct even though pi normalizes these fields when storing models. The table falls back to the family default for any unlisted model. Modalities lists input capabilities for chat models and `image` for image models._",
     "_**FREE** = usable on the free tier (200). **CHARGE** = 403, deposit required. **QUOTA** = 400, insufficient quota. Access is learned from your live chat responses and refreshed on demand with `/bai-free`; unknown models fall back to the seeded free list._",
   ].join("\n");
 }
