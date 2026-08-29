@@ -126,6 +126,56 @@ const FREE_IDS = new Set([
   "qwen3.8-flash",
 ]);
 
+// ---------------------------------------------------------------------------
+// Model access status — learned from live API responses
+// ---------------------------------------------------------------------------
+// B.AI changes pricing over time (free <-> charge). Instead of trusting only the
+// static FREE_IDS seed, we record each model's real access tier from actual API
+// responses and can refresh everything on demand via /bai-free:
+//   200                    -> "free"
+//   403 access_denied      -> "premium"  (deposit required)
+//   400 insufficient_quota -> "quota"
+// Observed status overrides the seed, so the /bai-models badge self-corrects the
+// next time you use a model that flipped. Unknown models fall back to FREE_IDS.
+export const modelStatus = new Map(); // id -> "free" | "premium" | "quota"
+
+function recordStatus(id: string, status: string) { modelStatus.set(id, status); }
+
+function recordStatusFromError(id: string, ev: any) {
+  const msg = [
+    ev?.errorMessage, ev?.message, ev?.error?.message, ev?.error?.code,
+    JSON.stringify(ev?.error ?? {}),
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (msg.includes("access_denied") || msg.includes("deposit")) recordStatus(id, "premium");
+  else if (msg.includes("insufficient_user_quota") || msg.includes("quota")) recordStatus(id, "quota");
+}
+
+// Access tier for display: observed status wins; otherwise fall back to the seed.
+function accessTier(id: string): string | null {
+  const observed = modelStatus.get(id);
+  if (observed) return observed;
+  return FREE_IDS.has(id) ? "free" : null;
+}
+
+// Wrap a chat stream so we learn the model's access tier from its outcome.
+// pi's lazyStream(model, setup) calls setup() with no args and expects a Promise
+// resolving to an async-iterable, so the observer is returned from an async arrow.
+export function observe(modelId: string, stream: any) {
+  if (!lazyStream) return stream;
+  return lazyStream({ id: modelId, provider: "bai" } as any, async () => {
+    async function* gen() {
+      let err: any = null;
+      for await (const ev of stream) {
+        if (ev?.type === "error") err = ev;
+        else if (ev?.type === "done" && ev.reason !== "error") recordStatus(modelId, "free");
+        if (err) recordStatusFromError(modelId, err);
+        yield ev;
+      }
+    }
+    return gen();
+  });
+}
+
 // Maps pi thinking levels → B.AI reasoning.effort values.
 const THINKING_LEVEL_MAP: Record<string, string> = {
   off: "none",
@@ -428,13 +478,14 @@ function streamBai(model: any, context: any, options: any) {
   // deepseek-v4-flash / hy3 / mimo-v2.5 families, glm-5.3-flash) are routed
   // straight to the openai-completions core — no wasted /v1/responses call.
   if (model.baiChatOnly || CHAT_ONLY_IDS.has(model.id)) {
-    return openAICompletionsApi().streamSimple(resolveChatModel(model), context, { ...options, apiKey });
+    return observe(model.id, openAICompletionsApi().streamSimple(resolveChatModel(model), context, { ...options, apiKey }));
   }
   // All other models go through the Responses API (native reasoning effort /
   // summary). B.AI's catalog metadata does NOT advertise which models support
   // /v1/responses, so we attempt it and transparently retry on
-  // /v1/chat/completions when the model is rejected there.
-  if (lazyStream) return lazyStream(model, async () => chatWithResponsesFallback(model, context, options, apiKey));
+  // /v1/chat/completions when the model is rejected there. The returned stream
+  // is observed so the model's access tier is learned from the outcome.
+  if (lazyStream) return observe(model.id, lazyStream(model, async () => chatWithResponsesFallback(model, context, options, apiKey)));
   return streamResponsesChat(model, context, options, apiKey);
 }
 
@@ -469,27 +520,34 @@ function buildModelsMarkdown(models: any[]): string {
     return [...head, "", "_No B.AI models available — set `BAI_API_KEY` and restart pi._"].join("\n");
   }
   // Free-tier models first, then alphabetical — makes the usable set obvious.
-  // Look up free status by id (not m.baiFree) so it survives pi stripping unknown
-  // model fields on registration.
-  const isFree = (m: any) => FREE_IDS.has(m.id);
+  // Access tier is learned from live responses (see modelStatus) and falls back
+  // to the seeded FREE_IDS set for models not yet observed.
+  const tierLabel = (m: any) => {
+    const t = accessTier(m.id);
+    if (t === "free") return "**FREE**";
+    if (t === "premium") return "CHARGE";
+    if (t === "quota") return "QUOTA";
+    return "—";
+  };
+  const isFree = (m: any) => accessTier(m.id) === "free";
   const sorted = [...models].sort(
     (a, b) => (isFree(b) ? 1 : 0) - (isFree(a) ? 1 : 0) || String(a.id).localeCompare(String(b.id)),
   );
   const rows = sorted
     .map(
       (m) =>
-        `| \`${m.id}\` | ${modelType(m)} | ${isFree(m) ? "**FREE**" : "—"} | ${m.reasoning ? "✓" : "—"} | ${fmtSize(m.contextWindow)} | ${fmtSize(m.maxTokens)} |`,
+        `| \`${m.id}\` | ${modelType(m)} | ${tierLabel(m)} | ${m.reasoning ? "✓" : "—"} | ${fmtSize(m.contextWindow)} | ${fmtSize(m.maxTokens)} |`,
     )
     .join("\n");
   return [
     ...head,
     "",
-    "| Model | Type | Free | Reasoning | Context | Max Out |",
-    "|---|---|:---:|:---:|:---:|---:|",
+    "| Model | Type | Access | Reasoning | Context | Max Out |",
+    "|---|---|:---:|:---:|:---:|:---:|",
     rows,
     "",
     "_Context windows / max output are conservative defaults; B.AI does not expose them via `/v1/models`._",
-    "_**FREE** = confirmed usable on the free tier (returns 200 without a deposit). All other models currently return 403 (deposit required) or 400 (insufficient quota). B.AI does not advertise this in `/v1/models`, so the list is point-in-time — re-probe to refresh._",
+    "_**FREE** = usable on the free tier (200). **CHARGE** = 403, deposit required. **QUOTA** = 400, insufficient quota. Status is learned from your live chat responses and refreshed on demand with `/bai-free`; unknown models fall back to the seeded free list._",
   ].join("\n");
 }
 
@@ -506,6 +564,39 @@ function openBrowser(url: string) {
 function notifyOrPrint(ctx: any, message: string, level: "info" | "warning" = "warning") {
   if (ctx?.hasUI) ctx.ui.notify(message, level);
   else console.log(message);
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Probe a single model's access tier via a tiny non-streaming chat request.
+// 200 -> free, 403 -> premium (charge), 400 insufficient_quota -> quota.
+// Retries on 429/5xx with backoff; other statuses are "unknown".
+async function probeAccess(id: string, apiKey: string, signal?: AbortSignal): Promise<string> {
+  const body = { model: id, messages: [{ role: "user", content: "hi" }], max_tokens: 8, stream: false };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+      if (res.status === 200) return "free";
+      if (res.status === 403) return "premium";
+      if (res.status === 400) {
+        const txt = await res.text();
+        return txt.includes("insufficient_user_quota") ? "quota" : "unknown";
+      }
+      if (res.status === 429 || res.status >= 500) { await sleep(8000); continue; }
+      return "unknown";
+    } catch {
+      if (signal?.aborted) return "unknown";
+      await sleep(5000); continue;
+    }
+  }
+  return "unknown";
 }
 
 function registerBaiCommands(pi: any) {
@@ -531,6 +622,45 @@ function registerBaiCommands(pi: any) {
     },
   });
   pi.registerEntryRenderer?.("bai-docs", (entry: any) =>
+    new Markdown(entry.data?.markdown ?? "", 1, 0, getMarkdownTheme()),
+  );
+
+  // On-demand full refresh of access tiers. B.AI changes pricing over time
+  // (free <-> charge), so this lets the user re-probe the whole catalog.
+  pi.registerCommand("bai-free", {
+    description: "Probe every B.AI model and refresh the FREE/CHARGE/QUOTA status (pricing changes over time).",
+    handler: async (_args: string, ctx: any) => {
+      const apiKey = process.env[API_KEY_ENV];
+      const all = baiModels(ctx).filter((m: any) => !IMAGE_SEED_IDS.includes(m.id));
+      const note = (msg: string, level: "info" | "warning" = "info") =>
+        ctx?.mode === "tui" ? pi.appendEntry("bai-free", { markdown: msg }) : notifyOrPrint(ctx, msg, level);
+      if (!apiKey) { note("_Set `BAI_API_KEY` to probe model access._", "warning"); return; }
+      if (all.length === 0) { note("_No B.AI models available — set `BAI_API_KEY` and restart pi._", "warning"); return; }
+      note(`_Probing ${all.length} B.AI model(s) for access tier… (this may take a minute)_`);
+      const results: Record<string, string[]> = { free: [], premium: [], quota: [], unknown: [] };
+      for (const m of all) {
+        if (ctx?.signal?.aborted) break;
+        const tier = await probeAccess(m.id, apiKey, ctx?.signal);
+        if (tier) modelStatus.set(m.id, tier);
+        results[tier]?.push(m.id);
+        await sleep(700);
+      }
+      if (ctx?.signal?.aborted) { note("_Probe aborted._", "warning"); return; }
+      const fmt = (arr: string[]) => (arr.length ? arr.map((i) => `\`${i}\``).join(", ") : "—");
+      const md = [
+        "# B.AI model access",
+        "",
+        `_Probed ${all.length} model(s). Status is also learned automatically from your chat responses._`,
+        "",
+        `**FREE (${results.free.length})**: ${fmt(results.free)}`,
+        `**CHARGE (${results.premium.length})**: ${fmt(results.premium)}`,
+        `**QUOTA (${results.quota.length})**: ${fmt(results.quota)}`,
+        results.unknown.length ? `**UNKNOWN (${results.unknown.length})**: ${fmt(results.unknown)}` : "",
+      ].filter(Boolean).join("\n");
+      note(md);
+    },
+  });
+  pi.registerEntryRenderer?.("bai-free", (entry: any) =>
     new Markdown(entry.data?.markdown ?? "", 1, 0, getMarkdownTheme()),
   );
 }

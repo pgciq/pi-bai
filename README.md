@@ -72,15 +72,19 @@ B.AI exposes three protocol-compatible endpoints under the production base URL
   `{ object, success, data: [{ id, object, created }] }`. `refreshModels` fetches it
   on startup / on demand, publishes the result, and always merges the image models
   (which are not part of the `/v1/models` catalog).
-- **Free tier** — B.AI does **not** advertise free/premium in `/v1/models`. The
-  signal is the API response: a model is free if `/v1/chat/completions` returns
-  `200`; premium models return `403 access_denied` ("Deposit required to unlock
-  premium models") and quota-limited ones return `400 insufficient_user_quota`.
-  The currently-free models (confirmed by probing all 44 catalog models) are:
+- **Free tier & access status** — B.AI does **not** advertise free/premium in
+  `/v1/models`, and **pricing changes over time** (free ⇄ charge). The signal is the
+  API response, and the extension **learns it automatically**:
+  - `200` from `/v1/chat/completions` → **FREE**
+  - `403 access_denied` ("Deposit required to unlock premium models") → **CHARGE**
+  - `400 insufficient_user_quota` → **QUOTA**
+  Every chat stream is observed, so the moment you use a model that flipped
+  free→charge (or charge→free), the `/bai-models` badge corrects itself. Unknown
+  models fall back to the seeded free list below.
+  The currently-free models (confirmed by probing the catalog) are:
   `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`, `hy3`, `mimo-v2.5`,
-  `glm-5.3-flash`, `qwen3.8-flash`. These are flagged `baiFree: true` and the
-  `/bai-models` command badges them **FREE** (the list is point-in-time — re-probe
-  to refresh, or just watch for a `403 access_denied` at chat time).
+  `glm-5.3-flash`, `qwen3.8-flash`. For a full refresh on demand, run `/bai-free`
+  (it probes every model against `/v1/chat/completions` and updates all badges).
 - **Image generation** — dispatched from `streamBai` via the `baiImageModel` flag,
   the same pattern `pi-cloudflare-workers-ai` uses (pi's extension API has no separate
   image-registration surface). The exact image endpoint is assumed OpenAI-compatible;
@@ -112,6 +116,19 @@ Opens the B.AI API reference in your browser.
 ```
 /bai-docs
 ```
+
+### `/bai-free`
+
+Probes **every** B.AI model against `/v1/chat/completions` and refreshes the
+FREE / CHARGE / QUOTA status for all of them (pricing changes over time, so this
+re-syncs the badges). It reports the counts and the model ids in each tier.
+
+```
+/bai-free
+```
+
+> The status is also learned automatically from your normal chat usage, so you
+> only need `/bai-free` when you want an immediate full refresh.
 
 ## Notes
 

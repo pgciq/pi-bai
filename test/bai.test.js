@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import extension from "../extensions/bai.ts";
+import extension, { observe, modelStatus } from "../extensions/bai.ts";
 
 function getProviderConfig() {
   let config;
@@ -213,6 +213,54 @@ test("falls back to the seed list (chat + image) when offline with no cache", as
     assert.ok(Array.isArray(result));
     assert.ok(result.length > 0);
     assert.ok(result.some((m) => m.baiImageModel), "seed includes image models");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("observe() learns FREE from a successful completion stream", async () => {
+  const fake = (async function* () {
+    yield { type: "start", partial: {} };
+    yield { type: "done", reason: "stop", message: {} };
+  })();
+  const wrapped = observe("observe-test-free", fake);
+  for await (const _ of wrapped) { /* drain */ }
+  assert.equal(modelStatus.get("observe-test-free"), "free");
+});
+
+test("/bai-free probes models and records access tiers", async () => {
+  let config, commands = [], appended = null;
+  extension({
+    registerProvider(_n, c) { config = c; },
+    registerEntryRenderer() {},
+    appendEntry(name, data) { appended = { name, data }; },
+    registerCommand(name, def) { commands.push({ name, def }); },
+  });
+  const handler = commands.find((c) => c.name === "bai-free").def.handler;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    // The model id is in the request body, not the URL.
+    const id = JSON.parse(options.body).model;
+    if (id.includes("gpt-5.6-sol")) return { status: 403, text: async () => '{"error":{"code":"access_denied"}}' };
+    return { status: 200, text: async () => "" };
+  };
+  try {
+    await handler("", {
+      mode: "tui",
+      signal: new AbortController().signal,
+      modelRegistry: {
+        getAvailable: () => [
+          { id: "deepseek-v4-flash", provider: "bai" },
+          { id: "gpt-5.6-sol", provider: "bai" },
+          { id: "gpt-image-2", provider: "bai" }, // image — skipped by the probe
+        ],
+      },
+    });
+    const md = appended.data.markdown;
+    assert.ok(md.includes("FREE"), "should report free models");
+    assert.ok(md.includes("CHARGE"), "should report charge models");
+    assert.equal(modelStatus.get("deepseek-v4-flash"), "free");
+    assert.equal(modelStatus.get("gpt-5.6-sol"), "premium");
   } finally {
     globalThis.fetch = originalFetch;
   }
