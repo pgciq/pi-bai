@@ -63,6 +63,11 @@ B.AI exposes three protocol-compatible endpoints under the production base URL
   — the fallback covers any we haven't listed. Chat-only models still reason
   natively (the core surfaces their `reasoning_content` thinking tokens); they just
   don't expose B.AI's Responses-API effort/summary controls.
+- **System role** — B.AI's upstream rejects the OpenAI `developer` message role
+  (HTTP 400, code 1214, "角色信息不正确"). Every chat/completions request is forced
+  to use `role: "system"` for the system prompt (via `compat.supportsDeveloperRole: false`
+  on the resolved model), so reasoning-capable chat-only models that hit the
+  Responses→Chat-Completions fallback also work.
 - **Model catalog** — `GET /v1/models` returns an OpenAI-compatible
   `{ object, success, data: [{ id, object, created }] }`. `refreshModels` fetches it
   on startup / on demand, publishes the result, and always merges the image models

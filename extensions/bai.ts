@@ -320,6 +320,19 @@ function streamResponsesChat(model: any, context: any, options: any, apiKey: str
   return openAIResponsesApi().streamSimple(resolved, context, { ...options, apiKey });
 }
 
+// Resolve a model for the OpenAI Chat Completions core. B.AI's upstream rejects
+// the `developer` message role (HTTP 400, code 1214 "角色信息不正确"), so we force
+// the system prompt to use `role: "system"` by disabling developer-role support
+// in the model's compat. (model.compat overrides the auto-detected compat.)
+function resolveChatModel(model: any) {
+  return {
+    ...model,
+    baseUrl: API_BASE,
+    api: "openai-completions",
+    compat: { ...(model.compat ?? {}), supportsDeveloperRole: false },
+  };
+}
+
 // Events that prove the Responses stream is actually producing output (so we
 // can commit to it instead of falling back to Chat Completions).
 const PRODUCTIVE_EVENTS = new Set([
@@ -356,7 +369,7 @@ async function* chatWithResponsesFallback(model: any, context: any, options: any
     if (done) break;
     if (ev?.type === "error") {
       if (isEndpointUnsupported(ev)) {
-        const chatResolved = { ...model, baseUrl: API_BASE, api: "openai-completions" };
+        const chatResolved = resolveChatModel(model);
         const chatOptions = { ...options, apiKey };
         delete chatOptions.reasoning;
         delete chatOptions.summary;
@@ -391,8 +404,7 @@ function streamBai(model: any, context: any, options: any) {
   // deepseek-v4-flash / hy3 / mimo-v2.5 families, glm-5.3-flash) are routed
   // straight to the openai-completions core — no wasted /v1/responses call.
   if (model.baiChatOnly) {
-    const resolved = { ...model, baseUrl: API_BASE, api: "openai-completions" };
-    return openAICompletionsApi().streamSimple(resolved, context, { ...options, apiKey });
+    return openAICompletionsApi().streamSimple(resolveChatModel(model), context, { ...options, apiKey });
   }
   // All other models go through the Responses API (native reasoning effort /
   // summary). B.AI's catalog metadata does NOT advertise which models support
