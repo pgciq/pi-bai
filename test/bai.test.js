@@ -147,6 +147,7 @@ test("/bai-models defaults to FREE-only and `all` shows everything", () => {
   assert.ok(free.includes("/bai-models all"), "default hints at the all parameter");
   assert.ok(!free.includes("gpt-5.6-sol"), "charged model gpt-5.6-sol omitted by default");
   assert.ok(!free.includes("claude-opus-5"), "charged model claude-opus-5 omitted by default");
+  assert.ok(!free.includes("gpt-image-2"), "image model gpt-image-2 omitted from default free view (not confirmed free)");
   // `all` -> everything, including charged models.
   handler("all", { mode: "tui", modelRegistry: { getAvailable: () => withProvider } });
   const all = appended.data.markdown;

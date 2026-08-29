@@ -732,7 +732,7 @@ function registerBaiCommands(pi: any) {
       // Charged / quota models are omitted unless `all` is passed.
       const models = showAll
         ? all
-        : all.filter((m: any) => modelType(m) === "image" || accessTier(m.id) === "free");
+        : all.filter((m: any) => accessTier(m.id) === "free");
       const markdown = buildModelsMarkdown(models, !showAll, all.length);
       if (ctx?.mode === "tui") pi.appendEntry("bai-models", { markdown });
       else notifyOrPrint(ctx, markdown, "info");
