@@ -104,7 +104,12 @@ test("/bai-models command badges FREE-tagged models", () => {
     registerCommand(name, def) { commands.push({ name, def }); },
   });
   const handler = commands.find((c) => c.name === "bai-models").def.handler;
-  const withProvider = config.models.map((m) => ({ ...m, provider: "bai" }));
+  // Simulate pi, which may strip unknown metadata fields (baiFree / baiImageModel /
+  // baiChatOnly) when registering models — the command must derive status from id.
+  const withProvider = config.models.map((m) => ({
+    id: m.id, name: m.id, provider: "bai", reasoning: m.reasoning,
+    input: m.input, contextWindow: m.contextWindow, maxTokens: m.maxTokens,
+  }));
   handler("", { mode: "tui", modelRegistry: { getAvailable: () => withProvider } });
   assert.ok(appended && appended.name === "bai-models");
   const md = appended.data.markdown;
@@ -113,6 +118,19 @@ test("/bai-models command badges FREE-tagged models", () => {
     assert.ok(md.includes(id), `markdown should list ${id}`);
   }
   assert.ok(md.includes("gpt-5.6-sol"), "markdown should list premium models too");
+  assert.ok(md.includes("gpt-image-2"), "markdown should list image models too");
+});
+
+test("streamBai routes by id when pi strips metadata fields", () => {
+  const { config } = getProviderConfig();
+  const ctx = { messages: [{ role: "user", content: "hi" }] };
+  // Models with ONLY an id (no baiChatOnly / baiImageModel flags).
+  const chatOnly = config.streamSimple({ id: "deepseek-v4-flash" }, ctx, {});
+  assert.ok(typeof chatOnly === "object" && chatOnly !== null, "id-based chat-only routing returns a stream");
+  const image = config.streamSimple({ id: "gpt-image-2" }, ctx, {});
+  assert.ok(typeof image === "object" && image !== null, "id-based image routing returns a stream");
+  const responses = config.streamSimple({ id: "gpt-5.6-sol" }, ctx, {});
+  assert.ok(typeof responses === "object" && responses !== null, "id-based responses routing returns a stream");
 });
 
 test("refreshes from the live /v1/models catalog and merges image models", async () => {

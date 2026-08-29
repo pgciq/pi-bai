@@ -419,12 +419,15 @@ async function* chatWithResponsesFallback(model: any, context: any, options: any
 }
 
 function streamBai(model: any, context: any, options: any) {
-  if (model.baiImageModel) return streamImageGeneration(model, context, options);
+  // pi may drop unknown metadata fields (baiImageModel / baiChatOnly / baiFree)
+  // when it registers models, so fall back to id-based lookups against our
+  // curated sets.
+  if (model.baiImageModel || IMAGE_SEED_IDS.includes(model.id)) return streamImageGeneration(model, context, options);
   const apiKey = process.env[API_KEY_ENV];
   // Models known to be chat/completions-only (e.g. the limited-time-free
   // deepseek-v4-flash / hy3 / mimo-v2.5 families, glm-5.3-flash) are routed
   // straight to the openai-completions core — no wasted /v1/responses call.
-  if (model.baiChatOnly) {
+  if (model.baiChatOnly || CHAT_ONLY_IDS.has(model.id)) {
     return openAICompletionsApi().streamSimple(resolveChatModel(model), context, { ...options, apiKey });
   }
   // All other models go through the Responses API (native reasoning effort /
@@ -446,7 +449,7 @@ function baiModels(ctx: any) {
 }
 
 function modelType(m: any): "image" | "chat" {
-  return m.baiImageModel ? "image" : "chat";
+  return m.baiImageModel || IMAGE_SEED_IDS.includes(m.id) ? "image" : "chat";
 }
 
 function fmtSize(n?: number): string {
@@ -466,13 +469,16 @@ function buildModelsMarkdown(models: any[]): string {
     return [...head, "", "_No B.AI models available — set `BAI_API_KEY` and restart pi._"].join("\n");
   }
   // Free-tier models first, then alphabetical — makes the usable set obvious.
+  // Look up free status by id (not m.baiFree) so it survives pi stripping unknown
+  // model fields on registration.
+  const isFree = (m: any) => FREE_IDS.has(m.id);
   const sorted = [...models].sort(
-    (a, b) => (b.baiFree ? 1 : 0) - (a.baiFree ? 1 : 0) || String(a.id).localeCompare(String(b.id)),
+    (a, b) => (isFree(b) ? 1 : 0) - (isFree(a) ? 1 : 0) || String(a.id).localeCompare(String(b.id)),
   );
   const rows = sorted
     .map(
       (m) =>
-        `| \`${m.id}\` | ${modelType(m)} | ${m.baiFree ? "**FREE**" : "—"} | ${m.reasoning ? "✓" : "—"} | ${fmtSize(m.contextWindow)} | ${fmtSize(m.maxTokens)} |`,
+        `| \`${m.id}\` | ${modelType(m)} | ${isFree(m) ? "**FREE**" : "—"} | ${m.reasoning ? "✓" : "—"} | ${fmtSize(m.contextWindow)} | ${fmtSize(m.maxTokens)} |`,
     )
     .join("\n");
   return [
