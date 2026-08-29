@@ -50,8 +50,8 @@ test("seeds chat + image models and flags reasoning/image metadata", () => {
   const mini = config.models.find((m) => m.id === "gpt-5-mini");
   assert.equal(mini.reasoning, false);
 
-  // Limited-time-free models are chat/completions-only (rejected on /v1/responses).
-  for (const id of ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "hy3", "mimo-v2.5"]) {
+  // Models rejected on /v1/responses are routed straight to chat/completions.
+  for (const id of ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "hy3", "mimo-v2.5", "glm-5.3-flash"]) {
     const m = config.models.find((x) => x.id === id);
     assert.ok(m, `seed should include ${id}`);
     assert.equal(m.baiChatOnly, true, `${id} should be flagged chat-only`);

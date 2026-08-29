@@ -52,13 +52,17 @@ B.AI exposes three protocol-compatible endpoints under the production base URL
   `none / low / medium / high / xhigh / max` efforts. By default reasoning is
   `none`; selecting a level in pi sends `reasoning: { effort, summary }`.
 - **Per-model endpoint selection** — B.AI rejects some models on `/v1/responses`
-  with `model_not_supported_on_endpoint` (e.g. the limited-time-free
-  `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`, `hy3`, `mimo-v2.5`). Those
-  are flagged `baiChatOnly: true` and routed through the OpenAI Chat Completions
-  core instead of the Responses core. They still reason natively (the core surfaces
-  their `reasoning_content` thinking tokens) — they just don't expose B.AI's
-  Responses-API effort/summary controls. If you discover more chat-only models,
-  add their ids to `CHAT_ONLY_IDS` in `extensions/bai.ts`.
+  with `model_not_supported_on_endpoint`. The chat/completions-only models we know
+  about (`deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`, `hy3`, `mimo-v2.5`,
+  `glm-5.3-flash`) are flagged `baiChatOnly: true` and routed straight to the
+  OpenAI Chat Completions core. Every other model is tried on the Responses API
+  first (for native reasoning effort / summary), and **if B.AI rejects it as
+  `/v1/responses`-only, the request is transparently retried on `/v1/chat/completions`**
+  (which supports all models; reasoning params are dropped on the retry since those
+  models reason via native tokens). So you don't need to enumerate chat-only models
+  — the fallback covers any we haven't listed. Chat-only models still reason
+  natively (the core surfaces their `reasoning_content` thinking tokens); they just
+  don't expose B.AI's Responses-API effort/summary controls.
 - **Model catalog** — `GET /v1/models` returns an OpenAI-compatible
   `{ object, success, data: [{ id, object, created }] }`. `refreshModels` fetches it
   on startup / on demand, publishes the result, and always merges the image models

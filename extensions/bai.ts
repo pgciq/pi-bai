@@ -71,6 +71,17 @@ const openAICompletionsApi = await (async () => {
   }
 })();
 
+// lazyStream builds an AssistantMessageEventStream from an async iterable — used
+// to wrap the Responses attempt so we can transparently retry on Chat
+// Completions when B.AI reports model_not_supported_on_endpoint.
+const lazyStream = await (async () => {
+  try {
+    return (await import("@earendil-works/pi-ai/api/lazy")).lazyStream;
+  } catch {
+    return null;
+  }
+})();
+
 // Reasoning-capable families (per B.AI docs: GPT-5.x, Claude Opus 5, Gemini 3.6,
 // DeepSeek v4, GLM-5.3, Kimi, Grok, MiMo, MiniMax, Hunyuan all support
 // reasoning). Lighter tiers are left non-reasoning to avoid sending the
@@ -92,6 +103,8 @@ const CHAT_ONLY_IDS = new Set([
   "deepseek-v4-flash-vision-exp",
   "hy3",
   "mimo-v2.5",
+  // glm-5.3-flash is a reasoning model but is also rejected on /v1/responses.
+  "glm-5.3-flash",
 ]);
 
 // Maps pi thinking levels → B.AI reasoning.effort values.
@@ -302,26 +315,91 @@ function streamImageGeneration(model: any, context: any, options: any) {
 // ---------------------------------------------------------------------------
 // Chat (OpenAI Responses API) — delegated to pi-ai's openai-responses core
 // ---------------------------------------------------------------------------
-function streamResponsesChat(model: any, context: any, options: any) {
-  const resolved = { ...model, baseUrl: API_BASE };
-  return openAIResponsesApi().streamSimple(resolved, context, {
-    ...options,
-    apiKey: process.env[API_KEY_ENV],
-  });
+function streamResponsesChat(model: any, context: any, options: any, apiKey: string) {
+  const resolved = { ...model, baseUrl: API_BASE, api: "openai-responses" };
+  return openAIResponsesApi().streamSimple(resolved, context, { ...options, apiKey });
+}
+
+// Events that prove the Responses stream is actually producing output (so we
+// can commit to it instead of falling back to Chat Completions).
+const PRODUCTIVE_EVENTS = new Set([
+  "thinking_start", "thinking_delta",
+  "text_start", "text_delta",
+  "message_start", "message_delta", "content_delta",
+  "assistant-message", "assistant-message-delta",
+  "tool_call_start", "tool_call_delta", "tool_call_end",
+  "done",
+]);
+
+function isEndpointUnsupported(ev: any): boolean {
+  if (!ev || ev.type !== "error") return false;
+  const parts = [
+    ev.errorMessage, ev.message,
+    ev.error?.message, ev.error?.errorMessage, ev.error?.code,
+    ev.error ? JSON.stringify(ev.error) : "",
+  ];
+  const hay = parts.filter(Boolean).join(" ").toLowerCase();
+  return hay.includes("model_not_supported_on_endpoint") || hay.includes("not supported on /v1/responses");
+}
+
+// Try the Responses API; if B.AI rejects the model as /v1/responses-only, retry
+// transparently on /v1/chat/completions (which supports every model). Reasoning
+// params are dropped on the fallback since chat/completions uses native
+// reasoning tokens instead of the Responses reasoning object.
+async function* chatWithResponsesFallback(model: any, context: any, options: any, apiKey: string) {
+  const responsesStream = streamResponsesChat(model, context, options, apiKey);
+  const it = (responsesStream as any)[Symbol.asyncIterator]();
+  const buffer: any[] = [];
+  let committed = false;
+  while (true) {
+    const { value: ev, done } = await it.next();
+    if (done) break;
+    if (ev?.type === "error") {
+      if (isEndpointUnsupported(ev)) {
+        const chatResolved = { ...model, baseUrl: API_BASE, api: "openai-completions" };
+        const chatOptions = { ...options, apiKey };
+        delete chatOptions.reasoning;
+        delete chatOptions.summary;
+        delete chatOptions.thinkingLevel;
+        yield* (openAICompletionsApi().streamSimple(chatResolved, context, chatOptions) as any);
+        return;
+      }
+      for (const b of buffer) yield b;
+      yield ev;
+      return;
+    }
+    buffer.push(ev);
+    if (PRODUCTIVE_EVENTS.has(ev.type)) {
+      for (const b of buffer) yield b;
+      committed = true;
+      break;
+    }
+  }
+  if (committed) {
+    while (true) {
+      const { value: ev, done } = await it.next();
+      if (done) break;
+      yield ev;
+    }
+  }
 }
 
 function streamBai(model: any, context: any, options: any) {
   if (model.baiImageModel) return streamImageGeneration(model, context, options);
-  // Chat-only models (e.g. the limited-time-free deepseek-v4-flash / hy3 /
-  // mimo-v2.5 families) are rejected on /v1/responses; route them to the
-  // openai-completions core. All other models use the Responses API, which
-  // carries native reasoning effort / summary controls.
   const apiKey = process.env[API_KEY_ENV];
+  // Models known to be chat/completions-only (e.g. the limited-time-free
+  // deepseek-v4-flash / hy3 / mimo-v2.5 families, glm-5.3-flash) are routed
+  // straight to the openai-completions core — no wasted /v1/responses call.
   if (model.baiChatOnly) {
     const resolved = { ...model, baseUrl: API_BASE, api: "openai-completions" };
     return openAICompletionsApi().streamSimple(resolved, context, { ...options, apiKey });
   }
-  return streamResponsesChat(model, context, options);
+  // All other models go through the Responses API (native reasoning effort /
+  // summary). B.AI's catalog metadata does NOT advertise which models support
+  // /v1/responses, so we attempt it and transparently retry on
+  // /v1/chat/completions when the model is rejected there.
+  if (lazyStream) return lazyStream(model, async () => chatWithResponsesFallback(model, context, options, apiKey));
+  return streamResponsesChat(model, context, options, apiKey);
 }
 
 // ---------------------------------------------------------------------------
