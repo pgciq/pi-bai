@@ -107,6 +107,25 @@ const CHAT_ONLY_IDS = new Set([
   "glm-5.3-flash",
 ]);
 
+// Models confirmed usable on the FREE tier (a request to /v1/chat/completions
+// returns HTTP 200 without a deposit). Everything else currently returns
+// 403 access_denied ("Deposit required to unlock premium models") or 400
+// insufficient_user_quota. B.AI does NOT expose this in /v1/models, so this is a
+// curated, point-in-time list — re-probe to refresh. The /bai-models command
+// badges these **FREE**. Determined by probing all 44 catalog models:
+//   FREE      : deepseek-v4-flash, deepseek-v4-flash-vision-exp, hy3, mimo-v2.5,
+//               glm-5.3-flash, qwen3.8-flash
+//   PREMIUM   : gpt-5.*, claude-*, gemini-*, glm-5.1/5.2, kimi-*, deepseek-v4-pro, ...
+//   QUOTA     : minimax-m2.7, qwen3.8-27b, mimo-v2.5-pro (400 insufficient_user_quota)
+const FREE_IDS = new Set([
+  "deepseek-v4-flash",
+  "deepseek-v4-flash-vision-exp",
+  "hy3",
+  "mimo-v2.5",
+  "glm-5.3-flash",
+  "qwen3.8-flash",
+]);
+
 // Maps pi thinking levels → B.AI reasoning.effort values.
 const THINKING_LEVEL_MAP: Record<string, string> = {
   off: "none",
@@ -147,6 +166,7 @@ const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 function chatModel(id: string) {
   const chatOnly = CHAT_ONLY_IDS.has(id);
   const reasoning = !chatOnly && REASONING_IDS.has(id);
+  const free = FREE_IDS.has(id);
   return {
     id,
     name: id,
@@ -155,8 +175,9 @@ function chatModel(id: string) {
     cost: { ...ZERO_COST },
     contextWindow: DEFAULT_CONTEXT,
     maxTokens: DEFAULT_MAX_TOKENS,
-    // Private metadata (pi ignores unknown fields); consumed by streamBai.
+    // Private metadata (pi ignores unknown fields); consumed by streamBai and /bai-models.
     ...(chatOnly ? { baiChatOnly: true } : {}),
+    ...(free ? { baiFree: true } : {}),
     ...(reasoning ? { thinkingLevelMap: THINKING_LEVEL_MAP } : {}),
   };
 }
@@ -444,20 +465,25 @@ function buildModelsMarkdown(models: any[]): string {
   if (models.length === 0) {
     return [...head, "", "_No B.AI models available — set `BAI_API_KEY` and restart pi._"].join("\n");
   }
-  const rows = models
+  // Free-tier models first, then alphabetical — makes the usable set obvious.
+  const sorted = [...models].sort(
+    (a, b) => (b.baiFree ? 1 : 0) - (a.baiFree ? 1 : 0) || String(a.id).localeCompare(String(b.id)),
+  );
+  const rows = sorted
     .map(
       (m) =>
-        `| \`${m.id}\` | ${modelType(m)} | ${m.reasoning ? "✓" : "—"} | ${fmtSize(m.contextWindow)} | ${fmtSize(m.maxTokens)} |`,
+        `| \`${m.id}\` | ${modelType(m)} | ${m.baiFree ? "**FREE**" : "—"} | ${m.reasoning ? "✓" : "—"} | ${fmtSize(m.contextWindow)} | ${fmtSize(m.maxTokens)} |`,
     )
     .join("\n");
   return [
     ...head,
     "",
-    "| Model | Type | Reasoning | Context | Max Out |",
-    "|---|---|:---:|:---:|---:|",
+    "| Model | Type | Free | Reasoning | Context | Max Out |",
+    "|---|---|:---:|:---:|:---:|---:|",
     rows,
     "",
     "_Context windows / max output are conservative defaults; B.AI does not expose them via `/v1/models`._",
+    "_**FREE** = confirmed usable on the free tier (returns 200 without a deposit). All other models currently return 403 (deposit required) or 400 (insufficient quota). B.AI does not advertise this in `/v1/models`, so the list is point-in-time — re-probe to refresh._",
   ].join("\n");
 }
 

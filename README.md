@@ -72,6 +72,15 @@ B.AI exposes three protocol-compatible endpoints under the production base URL
   `{ object, success, data: [{ id, object, created }] }`. `refreshModels` fetches it
   on startup / on demand, publishes the result, and always merges the image models
   (which are not part of the `/v1/models` catalog).
+- **Free tier** — B.AI does **not** advertise free/premium in `/v1/models`. The
+  signal is the API response: a model is free if `/v1/chat/completions` returns
+  `200`; premium models return `403 access_denied` ("Deposit required to unlock
+  premium models") and quota-limited ones return `400 insufficient_user_quota`.
+  The currently-free models (confirmed by probing all 44 catalog models) are:
+  `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`, `hy3`, `mimo-v2.5`,
+  `glm-5.3-flash`, `qwen3.8-flash`. These are flagged `baiFree: true` and the
+  `/bai-models` command badges them **FREE** (the list is point-in-time — re-probe
+  to refresh, or just watch for a `403 access_denied` at chat time).
 - **Image generation** — dispatched from `streamBai` via the `baiImageModel` flag,
   the same pattern `pi-cloudflare-workers-ai` uses (pi's extension API has no separate
   image-registration surface). The exact image endpoint is assumed OpenAI-compatible;

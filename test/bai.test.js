@@ -57,6 +57,15 @@ test("seeds chat + image models and flags reasoning/image metadata", () => {
     assert.equal(m.baiChatOnly, true, `${id} should be flagged chat-only`);
     assert.equal(m.reasoning, false, `${id} routes through openai-completions`);
   }
+
+  // Free-tier models (probed: return 200 without a deposit) are flagged baiFree.
+  for (const id of ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "hy3", "mimo-v2.5", "glm-5.3-flash", "qwen3.8-flash"]) {
+    const m = config.models.find((x) => x.id === id);
+    assert.ok(m, `seed should include ${id}`);
+    assert.equal(m.baiFree, true, `${id} should be flagged free`);
+  }
+  // Premium models are NOT flagged free.
+  assert.notEqual(config.models.find((x) => x.id === "gpt-5.6-sol").baiFree, true, "gpt-5.6-sol is not free");
 });
 
 test("streamBai routes chat-only models to openai-completions, others to responses", () => {
@@ -84,6 +93,26 @@ test("registers /bai-models and /bai-docs commands", () => {
   const names = commands.map((c) => c.name);
   assert.ok(names.includes("bai-models"));
   assert.ok(names.includes("bai-docs"));
+});
+
+test("/bai-models command badges FREE-tagged models", () => {
+  let config, commands = [], appended = null;
+  extension({
+    registerProvider(_n, c) { config = c; },
+    registerEntryRenderer() {},
+    appendEntry(name, data) { appended = { name, data }; },
+    registerCommand(name, def) { commands.push({ name, def }); },
+  });
+  const handler = commands.find((c) => c.name === "bai-models").def.handler;
+  const withProvider = config.models.map((m) => ({ ...m, provider: "bai" }));
+  handler("", { mode: "tui", modelRegistry: { getAvailable: () => withProvider } });
+  assert.ok(appended && appended.name === "bai-models");
+  const md = appended.data.markdown;
+  assert.ok(md.includes("FREE"), "markdown should badge free models");
+  for (const id of ["deepseek-v4-flash", "glm-5.3-flash", "qwen3.8-flash"]) {
+    assert.ok(md.includes(id), `markdown should list ${id}`);
+  }
+  assert.ok(md.includes("gpt-5.6-sol"), "markdown should list premium models too");
 });
 
 test("refreshes from the live /v1/models catalog and merges image models", async () => {
